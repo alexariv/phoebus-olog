@@ -72,6 +72,8 @@ import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.argThat;
@@ -315,8 +317,6 @@ public class LogResourceTest extends ResourcesTestBase {
 
     /**
      * Basically only test the endpoint...
-     *
-     * @throws Exception
      */
     @Test
     void testUpdateExisting() throws Exception {
@@ -562,7 +562,7 @@ public class LogResourceTest extends ResourcesTestBase {
                         .header(HttpHeaders.AUTHORIZATION, AUTHORIZATION)
                         .header(HttpHeaders.CONTENT_TYPE, "multipart/form-data")
                         .contentType(JSON);
-        mockMvc.perform(request).andExpect(status().isOk());
+        mockMvc.perform(request).andExpect(status().isBadRequest());
 
     }
 
@@ -753,12 +753,12 @@ public class LogResourceTest extends ResourcesTestBase {
             }
 
             @Override
-            public byte[] getBytes() throws IOException {
+            public byte[] getBytes() {
                 return new byte[0];
             }
 
             @Override
-            public InputStream getInputStream() throws IOException {
+            public InputStream getInputStream()  {
                 return getClass().getResourceAsStream("/IMG_1.heic");
             }
 
@@ -778,5 +778,42 @@ public class LogResourceTest extends ResourcesTestBase {
         List<MultipartFile> multipartFiles = logResource.checkSupportedAttachmentTypes(new MultipartFile[]{multipartFile});
         assertEquals(1, multipartFiles.size());
 
+    }
+
+    @Test
+    public void testIsAttachmentUploadConsistentNullFilesAndEmptyAttachment() {
+       assertTrue(logResource.isAttachmentUploadConsistent(LogBuilder.createLog().build(), null));
+    }
+
+    @Test
+    public void testIsAttachmentUploadConsistentNonNullFilesAndEmptyAttachment() {
+        MockMultipartFile file1 =
+                new MockMultipartFile("files", "filename1.txt", "text/plain", "some xml".getBytes());
+
+        assertFalse(logResource.isAttachmentUploadConsistent(LogBuilder.createLog().build(), new MultipartFile[]{file1}));
+    }
+
+    @Test
+    public void testIsAttachmentUploadConsistentNonMatchingAttachmentsFileNames() {
+        MockMultipartFile file1 =
+                new MockMultipartFile("files", "filename1.txt", "text/plain", "some xml".getBytes());
+        Log log = LogBuilder.createLog().build();
+        Attachment attachment = new Attachment();
+        attachment.setFilename("bad");
+        log.getAttachments().add(attachment);
+
+        assertFalse(logResource.isAttachmentUploadConsistent(log, new MultipartFile[]{file1}));
+    }
+
+    @Test
+    public void testIsAttachmentUploadConsistentMatchingAttachmentsFileNames() {
+        MockMultipartFile file1 =
+                new MockMultipartFile("files", "filename1.txt", "text/plain", "some xml".getBytes());
+        Log log = LogBuilder.createLog().build();
+        Attachment attachment = new Attachment();
+        attachment.setFilename("filename1.txt");
+        log.getAttachments().add(attachment);
+
+        assertTrue(logResource.isAttachmentUploadConsistent(log, new MultipartFile[]{file1}));
     }
 }

@@ -201,7 +201,7 @@ public class LogResource {
      */
     @GetMapping()
     public ResponseEntity<?> findLogs(@RequestHeader(value = OLOG_CLIENT_INFO_HEADER, required = false, defaultValue = "n/a") String clientInfo, @RequestParam MultiValueMap<String, String> allRequestParams) {
-        ResponseEntity responseEntity = search(clientInfo, allRequestParams);
+        ResponseEntity<?> responseEntity = search(clientInfo, allRequestParams);
         if (responseEntity.getStatusCode().equals(HttpStatus.OK)) {
             return new ResponseEntity<>(((SearchResult) responseEntity.getBody()).getLogs(), HttpStatus.OK);
         }
@@ -299,11 +299,12 @@ public class LogResource {
      * <p>Client calling this endpoint <b>must</b> set Content-Type=multipart/form-data.</p>
      *
      * @param clientInfo A string sent by client identifying it with respect to version and platform.
-     * @param logEntry   A {@link Log} object to be persisted.
+     * @param logEntry   A {@link Log} object to be persisted. If log entry does not specify any attachments,
+     *                   the {@link Log#getAttachments()} field is non-null and empty.
      * @param markup     Optional string identifying the wanted markup scheme.
      * @param inReplyTo  Optional log entry id specifying to which log entry the new log entry is a reply.
-     * @param files      Optional array of {@link MultipartFile}s representing attachments. These <b>must</b> appear in the same
-     *                   order as the {@link Attachment} items in the list of {@link Attachment}s of the log entry.
+     * @param files      Optional array of {@link MultipartFile}s representing attachments. This is <code>null</code>
+     *                   if log entry does not contain any attachments.
      * @param principal  The authenticated {@link Principal} of the request.
      * @return The persisted {@link Log} object.
      */
@@ -315,7 +316,7 @@ public class LogResource {
                          @RequestPart(value = "files", required = false) MultipartFile[] files,
                          @AuthenticationPrincipal Principal principal) {
 
-        if (files != null && logEntry.getAttachments() != null && files.length != logEntry.getAttachments().size()) {
+        if (!isAttachmentUploadConsistent(logEntry, files)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, TextUtil.ATTACHMENT_DATA_INVALID);
         }
 
@@ -540,11 +541,11 @@ public class LogResource {
      *            added if a {@link Property} with the same name (case sensitive) is present in the log entry.
      */
     private void addPropertiesFromProviders(Log log) {
-        List<String> propertyNames = log.getProperties().stream().map(Property::getName).collect(Collectors.toList());
+        List<String> propertyNames = log.getProperties().stream().map(Property::getName).toList();
         List<CompletableFuture<Property>> completableFutures =
                 propertyProviders.stream()
                         .map(propertyProvider -> CompletableFuture.supplyAsync(() -> propertyProvider.getProperty(log), executorService))
-                        .collect(Collectors.toList());
+                        .toList();
 
         CompletableFuture<Void> allFutures =
                 CompletableFuture.allOf(completableFutures.toArray(new CompletableFuture[completableFutures.size()]));
@@ -692,6 +693,37 @@ public class LogResource {
     }
 
     /**
+     * Checks that attachment upload is consistent with the log entry attachments part:
+     * <ul>
+     *     <li>Multipart file count must be equal to attachment count.</li>
+     *     <li>For each multipart file the original file name must match exactly one attachment's filename.</li>
+     * </ul>
+     * @param logEntry Log entry with attachments
+     * @param multipartFiles An array of {@link MultipartFile}s as provided by the web layer.
+     * @return <code>true</code> if attachments data is consistent, otherwise <code>false</code>
+     */
+    protected boolean isAttachmentUploadConsistent(Log logEntry, MultipartFile[] multipartFiles) {
+
+        if(multipartFiles != null && multipartFiles.length == logEntry.getAttachments().size()){
+            for (MultipartFile multipartFile : multipartFiles) {
+                String originalFileName = multipartFile.getOriginalFilename();
+
+                List<Attachment> attachment =
+                        logEntry.getAttachments().stream()
+                                .filter(a -> a.getFilename() != null && a.getFilename().equals(originalFileName)).toList();
+                if (attachment.size() != 1) { // Should not happen if client behaves correctly
+                    logger.log(Level.WARNING, () -> MessageFormat.format(TextUtil.ATTACHMENT_FILE_NOT_MATCHED_META_DATA, originalFileName));
+                    return false;
+                }
+            }
+            return true;
+        }
+        else {
+            return multipartFiles == null && logEntry.getAttachments().isEmpty();
+        }
+    }
+
+    /**
      * A {@link MultipartFile} implementation with the purpose of providing a custom {@link InputStream}.
      */
     private static final class OlogMultipartFile implements MultipartFile {
@@ -735,7 +767,7 @@ public class LogResource {
         }
 
         @Override
-        public InputStream getInputStream() throws IOException {
+        public InputStream getInputStream() {
             return inputStream;
         }
 
