@@ -8,7 +8,6 @@ package org.phoebus.olog;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.tika.detect.Detector;
 import org.phoebus.olog.entity.Attachment;
 import org.phoebus.olog.entity.Log;
 import org.phoebus.olog.entity.LogEntryGroupHelper;
@@ -55,6 +54,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -115,9 +115,6 @@ public class LogResource {
     @SuppressWarnings("unused")
     @Autowired
     private WebSocketService webSocketService;
-
-    @Autowired
-    private Detector detector;
 
     @Autowired
     private AttachmentsUploadUtil attachmentsUploadUtil;
@@ -413,6 +410,13 @@ public class LogResource {
             Log persistedLog = foundLog.get();
             logRepository.archive(persistedLog);
 
+            // If persisted log has attachments not listed in the log submitted by client,
+            // remove those as it indicates user wants to remove attachments from the updated entry.
+            // However, such removed attachments are not deleted from persistence layer as they
+            // are still referenced in the archived log entry.
+            Collection<Attachment> retained = CollectionUtils.retainAll(persistedLog.getAttachments(), log.getAttachments());
+            persistedLog.setAttachments(new TreeSet<>(retained));
+
             // log entry group property should not be editable but remain if it exists
             Property logEntryGroupProperty = LogEntryGroupHelper.getLogEntryGroupProperty(log);
             if (logEntryGroupProperty != null) {
@@ -474,7 +478,6 @@ public class LogResource {
             }
         }
 
-        // Update editable portions of the log entry, except attachments
         Log updatedLog = updateLog(Long.toString(logEntry.getId()),
                 markup,
                 false,
