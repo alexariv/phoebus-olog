@@ -5,6 +5,8 @@ services:
     ports:
       - "8080:8080"
       - "8181:8181"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mongo:
         condition: service_started
@@ -22,7 +24,7 @@ services:
       - olog-mongodata:/etc/mongo
 
   elastic:
-    image: elasticsearch:8.2.3
+    image: elasticsearch:8.16.0
     environment:
       cluster.name: elasticsearch
       bootstrap.memory_lock: "true"

@@ -182,6 +182,31 @@ public class ElasticConfig {
                 request.waitForActiveShards() != null ? request.waitForActiveShards()._toJsonString() : null
         ));
     }
+    
+    //START OF EDITS 
+    /** 
+     * Exposing the RestClient as a Spring Bean because
+     * ElasticsearchVectorStore requires it to be injected directly
+     **/
+
+    private RestClient httpClient;
+
+    // new bean — just extracts what was already inside getClient()
+    @Bean({"restClient"})
+    public RestClient getRestClient() {
+        if (httpClient == null) {
+            httpClient = RestClient.builder(new HttpHost(host, port, protocol))
+                    .setRequestConfigCallback(builder ->
+                            builder.setConnectTimeout(ES_HTTP_CONNECT_TIMEOUT_MS)
+                                    .setSocketTimeout(ES_HTTP_SOCKET_TIMEOUT_MS)
+                    )
+                    .setHttpClientConfigCallback(builder ->
+                            builder.setKeepAliveStrategy((response, context) -> ES_HTTP_CLIENT_KEEP_ALIVE_TIMEOUT_MS)
+                    )
+                    .build();
+        }
+        return httpClient;
+    }
 
     @Bean({"client"})
     public ElasticsearchClient getClient() {
@@ -199,21 +224,22 @@ public class ElasticConfig {
                     ES_HTTP_CONNECT_TIMEOUT_MS,
                     ES_HTTP_SOCKET_TIMEOUT_MS
             ));
-            RestClient httpClient = RestClient.builder(new HttpHost(host, port, protocol))
-                    .setRequestConfigCallback(builder ->
-                            builder.setConnectTimeout(ES_HTTP_CONNECT_TIMEOUT_MS)
-                                    .setSocketTimeout(ES_HTTP_SOCKET_TIMEOUT_MS)
-                    )
-                    .setHttpClientConfigCallback(builder ->
-                            // Avoid timeout problems
-                            // https://github.com/elastic/elasticsearch/issues/65213
-                            builder.setKeepAliveStrategy((response, context) -> ES_HTTP_CLIENT_KEEP_ALIVE_TIMEOUT_MS)
-                    )
-                    .build();
+            // RestClient httpClient = RestClient.builder(new HttpHost(host, port, protocol))
+            //         .setRequestConfigCallback(builder ->
+            //                 builder.setConnectTimeout(ES_HTTP_CONNECT_TIMEOUT_MS)
+            //                         .setSocketTimeout(ES_HTTP_SOCKET_TIMEOUT_MS)
+            //         )
+            //         .setHttpClientConfigCallback(builder ->
+            //                 // Avoid timeout problems
+            //                 // https://github.com/elastic/elasticsearch/issues/65213
+            //                 builder.setKeepAliveStrategy((response, context) -> ES_HTTP_CLIENT_KEEP_ALIVE_TIMEOUT_MS)
+            //         )
+            //         .build();
 
             // Create the Java API Client with the same low level client
             ElasticsearchTransport transport = new RestClientTransport(
-                    httpClient,
+                    //httpClient,
+                    getRestClient(), // use the same RestClient instance instead of creating a new one
                     new JacksonJsonpMapper()
             );
             client = new ElasticsearchClient(transport);
@@ -225,6 +251,7 @@ public class ElasticConfig {
         }
         return client;
     }
+    // END OF EDITS 
 
     /**
      * Create the olog indices and templates if they don't exist

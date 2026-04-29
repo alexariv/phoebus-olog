@@ -4,6 +4,8 @@
  * All rights reserved. Use is subject to license terms and conditions.
  */
 package org.phoebus.olog;
+import org.phoebus.olog.ai.LogEntryCreatedEvent;
+import org.springframework.context.ApplicationEventPublisher;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.apache.commons.collections4.CollectionUtils;
@@ -127,6 +129,9 @@ public class LogResource {
 
     @Autowired
     private Detector detector;
+    
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
 
     /**
      * Custom HTTP header that client may send in order to identify itself. This is logged for some of the
@@ -359,6 +364,7 @@ public class LogResource {
         log = cleanMarkup(markup, log);
         addPropertiesFromProviders(log);
         Log newLogEntry = logRepository.save(log);
+        eventPublisher.publishEvent(new LogEntryCreatedEvent(this, newLogEntry));
         sendToNotifiers(newLogEntry);
 
         webSocketService.sendMessageToClients(new WebSocketMessage(MessageType.NEW_LOG_ENTRY, null));
@@ -564,7 +570,10 @@ public class LogResource {
 
             webSocketService.sendMessageToClients(new WebSocketMessage(MessageType.LOG_ENTRY_UPDATED, persistedLog.getId().toString()));
 
-            return logRepository.update(persistedLog);
+            //return logRepository.update(persistedLog);
+            Log updatedLog = logRepository.update(persistedLog);
+            eventPublisher.publishEvent(new LogEntryCreatedEvent(this, updatedLog));
+                return updatedLog;
         } else {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, MessageFormat.format(TextUtil.LOG_NOT_RETRIEVED, logId));
         }

@@ -12,6 +12,7 @@ import org.springframework.context.annotation.ComponentScan;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.util.FileCopyUtils;
+import org.springframework.scheduling.annotation.EnableAsync;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -27,6 +28,7 @@ import java.util.logging.Logger;
 
 @SpringBootApplication
 @ComponentScan(basePackages = {"org.phoebus.olog"})
+@EnableAsync
 @SuppressWarnings("unused")
 public class Application {
     static final Logger logger = Logger.getLogger("Olog");
