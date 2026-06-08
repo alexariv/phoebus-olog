@@ -45,6 +45,10 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.Parameters;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.io.IOException;
 import java.security.Principal;
@@ -75,8 +79,9 @@ import static org.phoebus.util.time.TimestampFormats.MILLI_PATTERN;
  *
  * @author kunal
  */
-@RestController
+@RestController(value="Logs")
 @RequestMapping(LOG_RESOURCE_URI)
+@io.swagger.v3.oas.annotations.tags.Tag(name = "Logs")
 public class LogResource {
     private final Logger logger = Logger.getLogger(LogResource.class.getName());
 
@@ -129,6 +134,7 @@ public class LogResource {
 
     @GetMapping("{logId}")
     @SuppressWarnings("unused")
+    @Operation(summary = "Get a log by Id")
     public Log getLogById(@PathVariable(name = "logId") String logId) {
         Optional<Log> foundLog = logRepository.findById(logId);
         if (foundLog.isPresent()) {
@@ -142,11 +148,13 @@ public class LogResource {
 
     @GetMapping("archived/{logId}")
     @SuppressWarnings("unused")
+    @Operation(summary = "Get an archived log by Id")
     public SearchResult getArchivedLog(@PathVariable(name = "logId") String logId) {
         return logRepository.findArchivedById(logId);
     }
 
     @GetMapping("/attachments/{logId}/{attachmentName}")
+    @Operation(summary = "Get an attachment of a determined log", operationId = "getLogAttachment")
     public ResponseEntity<Resource> getAttachment(@PathVariable(name = "logId") String logId, @PathVariable(name = "attachmentName") String attachmentName) {
         Optional<Log> log = logRepository.findById(logId);
         if (log.isPresent()) {
@@ -196,6 +204,26 @@ public class LogResource {
      * empty list if no matching logs are found.
      */
     @GetMapping()
+    @Operation(summary = "Finds matching log entries",
+	description = "See /Ologs/logs/search (alias) for parameter details."
+			+ "",
+	operationId = "findLogs")
+    @Parameters({
+        @Parameter(name = "text", description = "A list of keywords which are present in the log entry description", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "fuzzy", description = "Allow fuzzy searches", schema = @Schema(type = "string"), required = false, example = "true|false"),
+        @Parameter(name = "phrase", description = "Finds log entries with the exact same word/s", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "owner", description = "Finds log entries with the given owner", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "start", description = "Search for log entries created after given time instant", schema = @Schema(type = "string"), required = false, example = "2021-01-20 12:00:00.123"),
+        @Parameter(name = "end", description = "Search for log entries created before the given time instant", schema = @Schema(type = "string"), required = false, example = "2021-01-21 12:00:00.123"),
+        @Parameter(name = "includeevents", description = "A flag to include log event times when", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "tags", description = "Search for log entries with at least one of the given tags", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "logbooks", description = "Search for log entries with at least one of the given logbooks", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "attachments", description = "To search for entries with at least one attachment", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "size", description = "The number of log entries to be returned within each page", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "attachments", description = "The page number, i.e page 1 is the 1 to 1+size log. entries matching the search", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "sort", description = "Order the search results based on create time", schema = @Schema(type = "string"), required = false, example = "up|down"),
+    })
+
     public ResponseEntity<?> findLogs(@RequestHeader(value = OLOG_CLIENT_INFO_HEADER, required = false, defaultValue = "n/a") String clientInfo, @RequestParam MultiValueMap<String, String> allRequestParams) {
         ResponseEntity<?> responseEntity = search(clientInfo, allRequestParams);
         if (responseEntity.getStatusCode().equals(HttpStatus.OK)) {
@@ -214,6 +242,45 @@ public class LogResource {
      * @return A {@link SearchResult} holding matching objects, if any.
      */
     @GetMapping("/search")
+    @Operation(summary = "Finds matching log entries",
+	description = "Finds matching log entries"
+			+ "\n"
+			+ "For time based search requests the client may specify a **tz** parameter indicating the client's time zone.\n"
+			+ "The format must be recognized as a valid zone identifier, see for instance <https://docs.oracle.com/javase/8/docs/api/java/time/ZoneId.html>.\n"
+			+ "If the client does not specify the time zone, the time zone of the service is used to compute start end end timestamps.\n"
+			+ "An invalid time zone specifier will result in a HTTP 400 (bad request) response.\n"
+			+ "\n"
+			+ "Example:\n"
+			+ "\n"
+			+ "**GET** <https://localhost:8181/Olog/logs/search?desc=dump&logbooks=Operations>\n"
+			+ "\n"
+			+ "The above search request will return all log entires with the term \"dump\" in their\n"
+			+ "descriptions and which are part of the Operations logbook.\n"
+			+ "\n"
+			+ "Retrieving an attachment of a log entry\n"
+			+ "\n"
+			+ "**GET** <https://localhost:8181/Olog/logs/attachments>/\\{logId}/\\{filename}\n"
+			+ "\n"
+			+ "Find entries with at least one attachment of type 'image'\n"
+			+ "\n"
+			+ "**GET** <https://localhost:8181/Olog/logs/search?attachments=image>\n"
+			+ "",
+	operationId = "searchLogs")
+    @Parameters({
+        @Parameter(name = "text", description = "A list of keywords which are present in the log entry description", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "fuzzy", description = "Allow fuzzy searches", schema = @Schema(type = "string"), required = false, example = "true|false"),
+        @Parameter(name = "phrase", description = "Finds log entries with the exact same word/s", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "owner", description = "Finds log entries with the given owner", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "start", description = "Search for log entries created after given time instant", schema = @Schema(type = "string"), required = false, example = "2021-01-20 12:00:00.123"),
+        @Parameter(name = "end", description = "Search for log entries created before the given time instant", schema = @Schema(type = "string"), required = false, example = "2021-01-21 12:00:00.123"),
+        @Parameter(name = "includeevents", description = "A flag to include log event times when", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "tags", description = "Search for log entries with at least one of the given tags", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "logbooks", description = "Search for log entries with at least one of the given logbooks", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "attachments", description = "To search for entries with at least one attachment", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "size", description = "The number of log entries to be returned within each page", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "attachments", description = "The page number, i.e page 1 is the 1 to 1+size log. entries matching the search", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "sort", description = "Order the search results based on create time", schema = @Schema(type = "string"), required = false, example = "up|down"),
+    })
     public ResponseEntity<?> search(@RequestHeader(value = OLOG_CLIENT_INFO_HEADER, required = false, defaultValue = "n/a") String clientInfo, @RequestParam MultiValueMap<String, String> allRequestParams) {
         logSearchRequest(clientInfo, allRequestParams);
         try {
@@ -243,6 +310,18 @@ public class LogResource {
      * @return The persisted {@link Log} object.
      */
     @PutMapping()
+    @Operation(summary = "Create a new log entry",
+	description = "Creates a new log entry. If the <code>inReplyTo</code> parameters identifies an existing log entry,\n"
+			+ " this method will treat the new log entry as a reply.\n"
+			+ " <p>\n"
+			+ " This may return a HTTP 400 if for instance <code>inReplyTo</code> does not identify an existing log entry,\n"
+			+ " or if the logbooks listed in the {@link Log} object contains invalid (i.e. non-existing) logbooks.\n"
+			+ " </p>\n"
+			+ " <p>\n"
+			+ " Primary use case is upload of log entry without attachments as this type of request is easier to\n"
+			+ " construct, i.e. client need not create a request with multipart items.\n"
+			+ " </p>",
+	operationId = "createLog")
     public Log createLog(@RequestHeader(value = OLOG_CLIENT_INFO_HEADER, required = false, defaultValue = "n/a") String clientInfo,
                          @RequestParam(name = "markup", required = false) String markup,
                          @RequestParam(name = "notifyWsClients", required = false, defaultValue = "true") boolean notifyWsClients,
@@ -307,6 +386,37 @@ public class LogResource {
      * @param principal  The authenticated {@link Principal} of the request.
      * @return The persisted {@link Log} object.
      */
+    @Operation(summary = "Create a new log entry (multipart)",
+    				description = "```json\n"
+    						+ "{\n"
+    						+ "   \"owner\":\"log\",\n"
+    						+ "     \"description\":\"Beam Dump due to Major power dip Current Alarms Booster transmitter switched back to lower state.\",\n"
+    						+ "     \"level\":\"Info\",\n"
+    						+ "     \"title\":\"Some title\",\n"
+    						+ "     \"logbooks\":[\n"
+    						+ "        {\n"
+    						+ "           \"name\":\"Operations\"\n"
+    						+ "        }\n"
+    						+ "     ],\n"
+    						+ "     \"attachments\":[\n"
+    						+ "        {\"id\": \"82dd67fa-09df-11ee-be56-0242ac120002\", \"filename\":\"MyScreenShot.png\"},\n"
+    						+ "        {\"id\": \"c02948ad-4bbd-432f-aa4d-a687a54f8d40\", \"filename\":\"MySpreadsheet.xlsx\"}\n"
+    						+ "     ]\n"
+    						+ "}\n"
+    						+ "```\n"
+    						+ "\n"
+    						+ "**NOTE** Attachment ids must be unique, e.g. UUID. When creating a log entry - optionally with attachments - client **must**:\n"
+    						+ "\n"
+    						+ "Use a multipart request and set the Content-Type to \"multipart/form-data\", even if no attachments are present.\n"
+    						+ "\n"
+    						+ "#. If attachments are present: add one request part per attachment file, in the order they appear in the log entry. Each\n"
+    						+ "file must be added using \"files\" as the name for the part.\n"
+    						+ "#. Add the log entry as a request part with content type \"application/json\". The name of the part must be \"logEntry\".\n"
+    						+ "\nThis may return a HTTP 400 if for instance <code>inReplyTo</code> does not identify an existing log entry,\n"
+    						+ "or if the logbooks listed in the {@link Log} object contains invalid (i.e. non-existing) logbooks."
+    						+ "Client must also be prepared to handle a HTTP 413 (payload too large) response in case the attached files exceed\n"
+    						+ "file and request size limits configured in the service.",
+    				operationId = "createLogMultipart")
     @PutMapping("/multipart")
     public Log createLog(@RequestHeader(value = OLOG_CLIENT_INFO_HEADER, required = false, defaultValue = "n/a") String clientInfo,
                          @RequestParam(name = "markup", required = false) String markup,
@@ -394,6 +504,16 @@ public class LogResource {
      */
     @SuppressWarnings("unused")
     @PostMapping("/{logId}")
+    @Operation(summary = "Update a log entry",
+	description = "Updates existing log record. Data sent by client is saved, i.e. if client specifies a shorter list\n"
+			+ "of logbooks or tags, the updated log record will reflect that. However, the following data is NOT updated:\n"
+			+ "<ul>\n"
+			+ "    <li>Attachments</li>\n"
+			+ "    <li>Created date</li>\n"
+			+ "    <li>Events</li>\n"
+			+ "</ul>\n"
+			+ "Notifiers - if such have been registered - are not called.",
+	operationId = "updateLog")
     public Log updateLog(@PathVariable(name = "logId") String logId,
                          @RequestParam(name = "markup", required = false) String markup,
                          @RequestParam(name = "notifyWsClients", required = false, defaultValue = "true") boolean notifyWsClients,
@@ -446,6 +566,7 @@ public class LogResource {
         } else {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, MessageFormat.format(TextUtil.LOG_NOT_RETRIEVED, logId));
         }
+    
     }
 
     @PostMapping("/multipart")
@@ -499,6 +620,7 @@ public class LogResource {
 
     @SuppressWarnings("unused")
     @PostMapping(value = "/group")
+    @Operation(summary = "Grouf logs", operationId = "groupLogs")
     public void groupLogEntries(@RequestBody List<Long> logEntryIds) {
         logger.log(Level.INFO, () -> "Grouping log entries: " + logEntryIds.stream().map(id -> Long.toString(id)).collect(Collectors.joining(",")));
         Property existingLogEntryGroupProperty = null;
@@ -668,6 +790,22 @@ public class LogResource {
      * @return the name of the RSS feed view, which will be resolved to render the feed
      */
     @GetMapping(path = "/rss", produces = "application/rss+xml")
+    @Operation(summary = "Get RSS feed", description = "GET method for retrieving an RSS feed of channels", operationId = "getRssFeed")
+    @Parameters({
+        @Parameter(name = "text", description = "A list of keywords which are present in the log entry description", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "fuzzy", description = "Allow fuzzy searches", schema = @Schema(type = "string"), required = false, example = "true|false"),
+        @Parameter(name = "phrase", description = "Finds log entries with the exact same word/s", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "owner", description = "Finds log entries with the given owner", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "start", description = "Search for log entries created after given time instant", schema = @Schema(type = "string"), required = false, example = "2021-01-20 12:00:00.123"),
+        @Parameter(name = "end", description = "Search for log entries created before the given time instant", schema = @Schema(type = "string"), required = false, example = "2021-01-21 12:00:00.123"),
+        @Parameter(name = "includeevents", description = "A flag to include log event times when", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "tags", description = "Search for log entries with at least one of the given tags", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "logbooks", description = "Search for log entries with at least one of the given logbooks", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "attachments", description = "To search for entries with at least one attachment", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "size", description = "The number of log entries to be returned within each page", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "attachments", description = "The page number, i.e page 1 is the 1 to 1+size log. entries matching the search", schema = @Schema(type = "string"), required = false, example = "*"),
+        @Parameter(name = "sort", description = "Order the search results based on create time", schema = @Schema(type = "string"), required = false, example = "up|down"),
+    })
     public com.rometools.rome.feed.rss.Channel getRssFeed(@RequestParam MultiValueMap<String, String> allRequestParams, HttpServletRequest request) {
         String baseUrl = request.getScheme() + "://" + request.getServerName() + ":" + request.getServerPort() + "/" + request.getContextPath();
         if (allRequestParams == null) {
