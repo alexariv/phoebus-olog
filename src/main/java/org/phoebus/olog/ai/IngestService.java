@@ -1,11 +1,16 @@
 package org.phoebus.olog.ai;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import org.phoebus.olog.entity.Log;
@@ -17,6 +22,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+
+import jakarta.annotation.PreDestroy;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.FieldValue;
@@ -67,45 +74,116 @@ public class IngestService {
     }
 
     // BULK-INGEST
-    // Called manually via POST /ai/ingest to backfill existing entries.
+    // Called manually via POST /Olog/ai/ingest/logs to backfill existing entries.
+    //progress tracking: getStatus() / GET /Olog/ai/ingest/logs/status.
+    public static class IngestAlreadyRunningException extends RuntimeException {
+        public IngestAlreadyRunningException() {
+            super("A full ingest is already running. Try again when it has finished.");
+        }
+    }
+ 
+    public enum IngestState { IDLE, RUNNING, COMPLETED, FAILED }
 
-    public void ingestAll() throws IOException {
-    int totalIngested = 0;
-    String lastId = null;
+    public record IngestStatus(IngestState state, Instant startedAt, Instant finishedAt,
+                               int scanned, int embedded, String error) { }
+ 
+    private final AtomicBoolean bulkIngestRunning = new AtomicBoolean(false);
+    private final AtomicInteger scanned = new AtomicInteger();
+    private final AtomicInteger embedded = new AtomicInteger();
+    private volatile IngestState state = IngestState.IDLE;
+    private volatile Instant startedAt;
+    private volatile Instant finishedAt;
+    private volatile String lastError;
 
-    while (true) {
-        final String currentLastId = lastId;
+    private final ExecutorService bulkIngestExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "olog-ai-bulk-ingest");
+        t.setDaemon(true);
+        return t;
+    });
 
-        SearchResponse<Map> response = esClient.search(
-            s -> {
-                s.index(logIndex)
-                 .size(PAGE_SIZE)
-                 .sort(sort -> sort.field(f -> f.field("id")
-                     .order(SortOrder.Asc)));
-                if (currentLastId != null) {
-                    s.searchAfter(FieldValue.of(currentLastId));
-                }
-                return s;
-            },
-            Map.class
-        );
-
-        List<Hit<Map>> hits = response.hits().hits();
-        if (hits.isEmpty()) break;
-
-        processHits(hits);
-        totalIngested += hits.size();
-        logger.info("Current ingest total: {}", totalIngested);
-
-        lastId = toString(hits.get(hits.size() - 1).source().get("id"));
-        if (hits.size() < PAGE_SIZE) break;
+     public IngestStatus startIngestAll() {
+        if (!bulkIngestRunning.compareAndSet(false, true)) {
+            throw new IngestAlreadyRunningException();
+        }
+        scanned.set(0);
+        embedded.set(0);
+        lastError = null;
+        finishedAt = null;
+        startedAt = Instant.now();
+        state = IngestState.RUNNING;
+        try {
+            bulkIngestExecutor.execute(this::runIngestAll);
+        } catch (RuntimeException e) {
+            // e.g. executor already shut down during application stop
+            finish(IngestState.FAILED, "Could not start ingest: " + e.getMessage());
+            throw e;
+        }
+        return getStatus();
+    }
+ 
+    public IngestStatus getStatus() {
+        return new IngestStatus(state, startedAt, finishedAt,
+                scanned.get(), embedded.get(), lastError);
+    }
+ 
+    @PreDestroy
+    void shutdownBulkIngest() {
+        bulkIngestExecutor.shutdownNow();
+    }
+ 
+    private void runIngestAll() {
+        try {
+            doIngestAll();
+            finish(IngestState.COMPLETED, null);
+            logger.info("Full ingest completed: {} scanned, {} embedded", scanned.get(), embedded.get());
+        } catch (Exception e) {
+            logger.error("Full ingest failed after {} scanned, {} embedded",
+                    scanned.get(), embedded.get(), e);
+            finish(IngestState.FAILED, e.getMessage() != null ? e.getMessage() : e.toString());
+        }
+    }
+ 
+    private void finish(IngestState endState, String error) {
+        lastError = error;
+        finishedAt = Instant.now();
+        state = endState;
+        bulkIngestRunning.set(false);
     }
 
-    logger.info("Total ingested: {}", totalIngested);
-}
+    private void doIngestAll() throws IOException {
+        List<FieldValue> searchAfter = null;
+ 
+        while (!Thread.currentThread().isInterrupted()) {
+            final List<FieldValue> currentSearchAfter = searchAfter;
+ 
+            SearchResponse<Map> response = esClient.search(
+                s -> {
+                    s.index(logIndex)
+                     .size(PAGE_SIZE)
+                     .sort(sort -> sort.field(f -> f.field("id")
+                         .order(SortOrder.Asc)));
+                    if (currentSearchAfter != null) {
+                        s.searchAfter(currentSearchAfter);
+                    }
+                    return s;
+                },
+                Map.class
+            );
+ 
+            List<Hit<Map>> hits = response.hits().hits();
+            if (hits.isEmpty()) break;
+ 
+            embedded.addAndGet(processHits(hits));
+            scanned.addAndGet(hits.size());
+            logger.info("Ingest progress: {} scanned, {} embedded", scanned.get(), embedded.get());
+            searchAfter = hits.get(hits.size() - 1).sort();
+            if (hits.size() < PAGE_SIZE) break;
+        }
+    }
+
     // Processes a page of raw ES hits and sends them to the vector store in batches.
     // Uses flatten() because the input here is a raw ES Map, not a Java Log object.
-    private void processHits(List<Hit<Map>> hits) {
+    private int processHits(List<Hit<Map>> hits) {
 
     List<Document> docsToInsert = new ArrayList<>();
 
@@ -134,7 +212,9 @@ public class IngestService {
                 Math.min(i + BATCH_SIZE, docsToInsert.size()));
             vectorStore.add(batch);
         }
+        return docsToInsert.size();
     }
+
     // Titles and descriptions are the only fields embedded
 private String buildEmbeddings(String title, String description) {
         boolean hasTitle       = title != null && !title.isBlank();

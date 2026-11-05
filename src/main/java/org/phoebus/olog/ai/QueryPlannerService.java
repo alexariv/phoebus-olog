@@ -1,5 +1,6 @@
 package org.phoebus.olog.ai;
 
+import java.util.List;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -28,13 +29,10 @@ public class QueryPlannerService {
     }
 
     public QueryPlan plan(String userQuery) {
-        String tagOptions = metadataService.getTags().stream()
-                .map(t -> "- \"" + t + "\"")
-                .collect(Collectors.joining("\n"));
+        String logbookOptions = toOptionList(metadataService.getLogbooks());
+        String tagOptions     = toOptionList(metadataService.getTags());
+        String levelOptions   = toOptionList(metadataService.getLevels());
 
-        String logbookOptions = metadataService.getLogbooks().stream()
-                .map(l -> "- \"" + l + "\"")
-                .collect(Collectors.joining("\n"));
         String systemPrompt = """
            You are a query parser for an operation log search system.
             1. Extract semantic concepts for text search (goes in "semanticQuery")
@@ -48,7 +46,12 @@ public class QueryPlannerService {
             IS: 'IS' | 'is'; NULL: 'NULL' | 'null'; NOT NULL: 'NOT NULL' | 'not null';
             - If a term sounds like it could be metadata but is NOT in the allowed lists, treat 
             it as semantic search content and do NOT include it in the filter expression and DO NOT 
-            deviant from the approved list.
+            deviate from the approved list.
+            - String values MUST be in single quotes. Lists use square brackets.
+            -Examples:
+                  logbooks_name == 'Operations'
+                  logbooks_name == 'Operations' && tags_name == 'Alarm'
+                  level in ['Urgent', 'Problem']
 
             The backend has:
             - A semantic search over the `description` text using embeddings.
@@ -65,7 +68,8 @@ public class QueryPlannerService {
             tags_name options (case-sensitive):
             %s
 
-            level options: "Info", "Urgent", "Warning", "Error"
+            level options (case-sensitive): 
+            %s
             state options: "Active", "Inactive"
 
             METADATA FILTERING STRATEGY — be conservative. A wrong filter silently
@@ -107,7 +111,7 @@ public class QueryPlannerService {
             - "semanticQuery" must NEVER be an empty string. If the entire
               question was converted into filters, set "semanticQuery" to the
               original question verbatim.
-            """;
+            """.formatted(logbookOptions, tagOptions, levelOptions);
 
         return executeWithRetry(() -> {
             String rawResponse = this.chatClient
@@ -166,6 +170,15 @@ public class QueryPlannerService {
         fallback.setSemanticQuery(userQuery);
         fallback.setFilterExpression(null);
         return fallback;
+    }
+
+    private static String toOptionList(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return "(none — do not filter on this field)";
+        }
+        return values.stream()
+                .map(v -> "- \"" + v.replace("\"", "\\\"") + "\"")
+                .collect(Collectors.joining("\n"));
     }
 
     private String extractJson(String raw) {
